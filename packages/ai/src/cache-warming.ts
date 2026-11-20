@@ -33,6 +33,16 @@ export const CACHE_WARMING_MAX_AGE_MS = 60 * 60_000;
 /** Idle warming uses a shorter horizon because continuation estimates become less reliable with age. */
 export const CACHE_WARMING_MAX_IDLE_AGE_MS = 30 * 60_000;
 
+/**
+ * How long after the request that started it a warming run may still refresh in `phase`. Idle warming lasts at least
+ * the entry's lifetime, up to the streaming limit, so an entry that outlives the idle horizon (a one-hour cache) still
+ * gets its refresh instead of none.
+ */
+export function getCacheWarmingMaxAgeMs(phase: CacheWarmingPhase, ttlMs: number): number {
+	if (phase === "streaming") return CACHE_WARMING_MAX_AGE_MS;
+	return Math.min(Math.max(CACHE_WARMING_MAX_IDLE_AGE_MS, ttlMs), CACHE_WARMING_MAX_AGE_MS);
+}
+
 /** A refresh is sent only when it is expected to save at least this many dollars. */
 export const CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS = 0.05;
 

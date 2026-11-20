@@ -1,13 +1,12 @@
 import {
 	type Api,
-	CACHE_WARMING_MAX_AGE_MS,
-	CACHE_WARMING_MAX_IDLE_AGE_MS,
 	CACHE_WARMING_MINIMUM_EXPECTED_SAVINGS,
 	type CacheWarmingAction,
 	type CacheWarmingDecision,
 	type Context,
 	evaluateCacheWarming,
 	getCacheWarmingDelayMs,
+	getCacheWarmingMaxAgeMs,
 	getCacheWarmingRequestOptions,
 	getPromptCacheTtlMs,
 	isCacheWarmingReplayable,
@@ -177,9 +176,10 @@ export class CacheWarmer {
 			return;
 		}
 		run.phase = "idle";
-		const deadline = run.startedAt + CACHE_WARMING_MAX_IDLE_AGE_MS;
+		const maxAgeMs = getCacheWarmingMaxAgeMs("idle", run.ttlMs);
+		const deadline = run.startedAt + maxAgeMs;
 		if (run.nextWarmAt > deadline || Date.now() >= deadline) {
-			this.stop("30-minute idle safety limit reached");
+			this.stop(`${maxAgeMs / 60_000}-minute idle safety limit reached`);
 		}
 	}
 
@@ -215,10 +215,14 @@ export class CacheWarmer {
 		// the planned pre-expiry margin for that delay and request dispatch; a
 		// late refresh is likely a full-price cache write, not a cache warm.
 		run.refreshDeadlineAt = run.nextWarmAt + Math.floor((run.ttlMs - run.delayMs) / 2);
-		const deadline =
-			run.startedAt + (run.phase === "idle" ? CACHE_WARMING_MAX_IDLE_AGE_MS : CACHE_WARMING_MAX_AGE_MS);
+		const maxAgeMs = getCacheWarmingMaxAgeMs(run.phase, run.ttlMs);
+		const deadline = run.startedAt + maxAgeMs;
 		if (run.nextWarmAt > deadline || Date.now() >= deadline) {
-			this.stop(run.phase === "idle" ? "30-minute idle safety limit reached" : "one-hour safety limit reached");
+			this.stop(
+				run.phase === "idle"
+					? `${maxAgeMs / 60_000}-minute idle safety limit reached`
+					: "one-hour safety limit reached",
+			);
 			return;
 		}
 		run.timer = setTimeout(() => void this.refresh(run), Math.max(0, run.nextWarmAt - Date.now()));

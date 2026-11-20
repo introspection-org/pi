@@ -3,11 +3,10 @@
 // long as that is expected to pay off. The policy is pi-ai's; this file schedules it per conversation.
 import {
 	type AssistantMessage,
-	CACHE_WARMING_MAX_AGE_MS,
-	CACHE_WARMING_MAX_IDLE_AGE_MS,
 	type CacheWarmingPhase,
 	evaluateCacheWarming,
 	getCacheWarmingDelayMs,
+	getCacheWarmingMaxAgeMs,
 	getCacheWarmingRequestOptions,
 	getPromptCacheTtlMs,
 	isCacheWarmingReplayable,
@@ -38,6 +37,7 @@ type Run = {
 	readonly models: Models;
 	/** Prompt size of the request, as the provider reported it. */
 	readonly promptTokens: number;
+	readonly ttlMs: number;
 	readonly delayMs: number;
 	readonly startedAt: number;
 	readonly controller: AbortController;
@@ -46,7 +46,7 @@ type Run = {
 
 /**
  * One warming run per conversation, started by each response and replaced by the next one. Each refresh asks the host
- * for the conversation's phase and refreshes while the request is at most an hour old (30 minutes once idle) and the
+ * for the conversation's phase and refreshes while the request is within pi-ai's `getCacheWarmingMaxAgeMs()` for that phase and the
  * refresh pays off by pi-ai's `evaluateCacheWarming()`.
  */
 export class ConversationWarmers {
@@ -69,12 +69,13 @@ export class ConversationWarmers {
 		if (!isCacheWarmingReplayable(request.model, request.options)) return;
 		const ttlMs = getPromptCacheTtlMs(request.model, request.options);
 		const delayMs = ttlMs === undefined ? undefined : getCacheWarmingDelayMs(ttlMs);
-		if (delayMs === undefined) return;
+		if (ttlMs === undefined || delayMs === undefined) return;
 		const { input, cacheRead, cacheWrite } = message.usage;
 		const run: Run = {
 			request,
 			models,
 			promptTokens: input + cacheRead + cacheWrite,
+			ttlMs,
 			delayMs,
 			startedAt: Date.now(),
 			controller: new AbortController(),
@@ -128,8 +129,7 @@ export class ConversationWarmers {
 		if (mode === "off") return false;
 		const phase = await this.#host.phase(conversationId, run.request);
 		if (phase === undefined || (phase === "idle" && mode === "streaming")) return false;
-		const maxAge = phase === "idle" ? CACHE_WARMING_MAX_IDLE_AGE_MS : CACHE_WARMING_MAX_AGE_MS;
-		if (Date.now() > run.startedAt + maxAge) return false;
+		if (Date.now() > run.startedAt + getCacheWarmingMaxAgeMs(phase, run.ttlMs)) return false;
 		const { action } = evaluateCacheWarming(run.request.model, run.promptTokens, phase);
 		return action === "warm" && this.#runs.get(conversationId) === run;
 	}
