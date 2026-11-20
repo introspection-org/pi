@@ -3,6 +3,7 @@ import {
 	type AssistantMessage,
 	type AssistantMessageEventStream,
 	getCacheWarmingDelayMs,
+	getCacheWarmingMaxAgeMs,
 	getPromptCacheTtlMs,
 	isCacheWarmingReplayable,
 	type Model,
@@ -137,6 +138,12 @@ describe("cache warming", () => {
 			[270_000, 50_000, undefined],
 		);
 		expect([
+			getCacheWarmingMaxAgeMs("idle", 300_000),
+			getCacheWarmingMaxAgeMs("idle", 3_600_000),
+			getCacheWarmingMaxAgeMs("idle", 86_400_000),
+			getCacheWarmingMaxAgeMs("streaming", 300_000),
+		]).toEqual([1_800_000, 3_600_000, 3_600_000, 3_600_000]);
+		expect([
 			isCacheWarmingReplayable(budgetModel, { reasoning: "medium" }),
 			isCacheWarmingReplayable(budgetModel, undefined),
 			isCacheWarmingReplayable(adaptiveModel, { reasoning: "medium" }),
@@ -184,6 +191,19 @@ describe("cache warming", () => {
 		await vi.advanceTimersByTimeAsync(270_000);
 		expect(calls).toHaveLength(2);
 		warmer.cancel();
+	});
+
+	it("refreshes an idle one-hour cache once instead of never", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		const { warmer, calls } = fakeRuntime({ branch: branchWithPrompt(1_000_000) });
+		warmer.start(request(adaptiveModel, { cacheRetention: "long" }), current);
+		warmer.onAgentSettled();
+		expect(warmer.status).toMatchObject({ state: "scheduled", nextWarmAt: 3_240_000 });
+
+		await vi.advanceTimersByTimeAsync(3_240_000);
+		expect(calls).toHaveLength(1);
+		expect(warmer.status).toMatchObject({ state: "inactive", reason: "60-minute idle safety limit reached" });
 	});
 
 	it("does not issue refreshes after their safe deadline", async () => {
